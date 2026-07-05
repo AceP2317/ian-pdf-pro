@@ -1,7 +1,10 @@
 import { memo, useEffect, useRef, useState } from "react";
+import type { MouseEvent } from "react";
+import { useApp } from "../../store";
 import type { PageState } from "../../store";
 import * as engine from "../../core/pdf-engine";
 import { highlightTextLayer } from "./highlight";
+import { AnnotationOverlay } from "../annotate/AnnotationOverlay";
 
 interface Props {
   page: PageState;
@@ -31,6 +34,21 @@ export const PageView = memo(function PageView({
   const [rendered, setRendered] = useState(false);
   const queryRef = useRef(query);
   queryRef.current = query;
+  const tool = useApp((s) => s.tool);
+  const addNote = useApp((s) => s.addNote);
+
+  const onPageClick = async (e: MouseEvent<HTMLDivElement>) => {
+    if (tool !== "note" || !rendered) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const conv = await engine.getPageConverters(
+      page.srcIndex,
+      zoom,
+      page.extraRotation
+    );
+    const [px, py] = conv.cssToPdf(e.clientX - rect.left, e.clientY - rect.top);
+    const half = engine.NOTE_ICON_SIZE / 2;
+    addNote(page.srcIndex, px - half, py - half);
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -74,13 +92,21 @@ export const PageView = memo(function PageView({
 
   return (
     <div
-      className="page"
+      className={`page${tool === "note" ? " tool-note" : ""}`}
       style={{ top, width, height }}
       data-page={viewIndex + 1}
+      onClick={(e) => void onPageClick(e)}
     >
       {!rendered && <div className="page-placeholder">{viewIndex + 1}</div>}
       <canvas ref={canvasRef} />
       <div className="textLayer" ref={textRef} />
+      {shouldRender && (
+        <AnnotationOverlay
+          srcIndex={page.srcIndex}
+          extraRotation={page.extraRotation}
+          zoom={zoom}
+        />
+      )}
     </div>
   );
 });

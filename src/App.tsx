@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useApp } from "./store";
 import { Viewer } from "./features/viewer/Viewer";
 import { ThumbnailSidebar } from "./features/organizer/ThumbnailSidebar";
+import { captureSelectionHighlights } from "./features/annotate/selection";
 import "./App.css";
 
 const ZOOM_STEP = 1.25;
@@ -23,6 +24,9 @@ function App() {
   const rotateSelection = useApp((s) => s.rotateSelection);
   const deleteSelection = useApp((s) => s.deleteSelection);
   const setZoom = useApp((s) => s.setZoom);
+  const tool = useApp((s) => s.tool);
+  const setTool = useApp((s) => s.setTool);
+  const addHighlight = useApp((s) => s.addHighlight);
   const runSearch = useApp((s) => s.runSearch);
   const gotoMatch = useApp((s) => s.gotoMatch);
   const clearSearch = useApp((s) => s.clearSearch);
@@ -46,8 +50,26 @@ function App() {
     setZoom((el.clientWidth - 72) / widest);
   };
 
+  const highlightSelection = async () => {
+    const { pages: p, zoom: z } = useApp.getState();
+    const captured = await captureSelectionHighlights(p, z);
+    if (captured.length === 0) {
+      useApp.setState({
+        error: "Select some text in the document first, then click Highlight",
+      });
+      return;
+    }
+    for (const c of captured) addHighlight(c.srcIndex, c.quads);
+    window.getSelection()?.removeAllRanges();
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        useApp.getState().setTool("select");
+        useApp.getState().openNoteEditor(null);
+        return;
+      }
       if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
       if (k === "o") {
@@ -140,6 +162,23 @@ function App() {
             title="Delete selected pages"
           >
             Delete
+          </button>
+        </div>
+        <div className="toolbar-group">
+          <button
+            onClick={() => void highlightSelection()}
+            disabled={!hasDoc}
+            title="Highlight the selected text"
+          >
+            Highlight
+          </button>
+          <button
+            className={tool === "note" ? "active" : ""}
+            onClick={() => setTool(tool === "note" ? "select" : "note")}
+            disabled={!hasDoc}
+            title="Sticky note — click on the page to place it (Esc to cancel)"
+          >
+            Note
           </button>
         </div>
         <div className="toolbar-group">

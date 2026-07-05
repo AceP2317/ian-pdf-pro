@@ -11,6 +11,7 @@ import { TextLayer } from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 export * from "./pdf-ops";
+export * from "./annotations";
 
 export interface PageDim {
   width: number; // unrotated media box, PDF units at scale 1
@@ -178,6 +179,35 @@ export function renderThumbnail(
   thumbCache.set(key, job);
   job.catch(() => thumbCache.delete(key));
   return job;
+}
+
+export interface PageConverters {
+  cssToPdf(x: number, y: number): [number, number];
+  pdfToCss(x: number, y: number): [number, number];
+}
+
+// Converters between CSS pixels (relative to the page element at `scale`)
+// and PDF user space, honoring intrinsic + user rotation.
+export async function getPageConverters(
+  srcIndex: number,
+  scale: number,
+  extraRotation: number
+): Promise<PageConverters> {
+  if (!doc) throw new Error("no document");
+  const page = await doc.getPage(srcIndex + 1);
+  const viewport = page.getViewport({
+    scale,
+    rotation: (page.rotate + extraRotation) % 360,
+  });
+  return {
+    cssToPdf(x, y) {
+      return viewport.convertToPdfPoint(x, y) as [number, number];
+    },
+    pdfToCss(x, y) {
+      const [vx, vy] = viewport.convertToViewportPoint(x, y);
+      return [vx, vy];
+    },
+  };
 }
 
 export async function getPageText(srcIndex: number): Promise<string> {

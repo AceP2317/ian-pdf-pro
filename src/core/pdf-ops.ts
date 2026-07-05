@@ -1,12 +1,19 @@
 // Pure pdf-lib document surgery. No pdf.js, no DOM — runs in any JS host,
 // which keeps these ops testable outside the webview.
 import { PDFDocument, degrees } from "@cantoo/pdf-lib";
+import { addAnnotationToPage } from "./annotations";
+import type { AnnotationSpec } from "./annotations";
 
 export type Rotation = 0 | 90 | 180 | 270;
 
 export interface PageEntry {
   srcIndex: number; // 0-based page index in the source document
   extraRotation: Rotation; // user rotation on top of the page's own /Rotate
+}
+
+export interface PlacedAnnotation {
+  srcIndex: number; // page of the SOURCE document the annotation sits on
+  spec: AnnotationSpec;
 }
 
 export function identityPages(numPages: number): PageEntry[] {
@@ -16,11 +23,14 @@ export function identityPages(numPages: number): PageEntry[] {
   }));
 }
 
-// Build a new PDF from `bytes` with pages in `pages` order and rotation.
-// Also used for extraction: pass a subset of entries.
+// Build a new PDF from `bytes` with pages in `pages` order and rotation,
+// writing `annotations` onto their pages. Annotations whose srcIndex is not
+// in `pages` are dropped with their page. Also used for extraction: pass a
+// subset of entries.
 export async function materialize(
   bytes: Uint8Array,
-  pages: PageEntry[]
+  pages: PageEntry[],
+  annotations: PlacedAnnotation[] = []
 ): Promise<Uint8Array> {
   if (pages.length === 0) throw new Error("Cannot save a PDF with no pages");
   const src = await PDFDocument.load(bytes);
@@ -30,12 +40,18 @@ export async function materialize(
     src,
     pages.map((p) => p.srcIndex)
   );
+  const now = new Date();
   copied.forEach((page, i) => {
     const extra = pages[i].extraRotation;
     if (extra !== 0) {
       page.setRotation(degrees((page.getRotation().angle + extra) % 360));
     }
     out.addPage(page);
+    for (const placed of annotations) {
+      if (placed.srcIndex === pages[i].srcIndex) {
+        addAnnotationToPage(out, page, placed.spec, now);
+      }
+    }
   });
   return out.save();
 }

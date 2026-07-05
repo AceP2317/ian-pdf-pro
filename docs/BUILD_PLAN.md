@@ -57,6 +57,7 @@ Node 24, Rust stable MSVC + Android targets, portable JDK 17, Android SDK/NDK, V
 
 **Phase 2 — Annotate:** `annotations.ts` writing real annotation dicts WITH appearance streams; overlay UI on the viewer.
 ✅ Highlight + sticky note made here are visible and editable in Adobe Reader.
+Status 2026-07-05: built. `core/annotations.ts` writes /Highlight (QuadPoints + Multiply-blend Form-XObject AP) and /Text sticky notes (icon AP + linked /Popup), all with /T, /Contents, /NM, /M for editability; annotations ride the virtual page mapping and materialize on save/extract/merge. 26-check Node suite passed (dict structure, AP streams, popup linkage, reorder-following, pdf.js parse with hasAppearance=true). Pending to close: Adobe Reader visible+editable check (`fixtures/annotated-sample.pdf` + an in-app annotate/save run).
 
 **Phase 3 — Fill & sign:** AcroForm detect/fill, signature pad → image/ink annot, flatten.
 ✅ A filled government-style form opens flattened in another reader.

@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import * as engine from "./core/pdf-engine";
-import type { PageDim, SearchMatch, Rotation } from "./core/pdf-engine";
+import type {
+  PageDim,
+  SearchMatch,
+  Rotation,
+  PdfRect,
+  RGB,
+  PlacedAnnotation,
+} from "./core/pdf-engine";
 import { pickPdf, pickPdfs, pickSavePath } from "./platform/dialogs";
 import { readFileBytes, writeFileBytes, baseName } from "./platform/fs";
 
@@ -8,6 +15,49 @@ export interface PageState {
   id: number; // stable across reorder — React keys and selection
   srcIndex: number;
   extraRotation: Rotation;
+}
+
+export type Tool = "select" | "note";
+
+export type AnnotationUI =
+  | {
+      id: number;
+      srcIndex: number;
+      type: "highlight";
+      color: RGB;
+      contents: string;
+      quads: PdfRect[];
+    }
+  | {
+      id: number;
+      srcIndex: number;
+      type: "note";
+      color: RGB;
+      contents: string;
+      x: number;
+      y: number;
+    };
+
+const AUTHOR = "Ian";
+const HIGHLIGHT_COLOR: RGB = { r: 1, g: 0.82, b: 0 };
+const NOTE_COLOR: RGB = { r: 1, g: 0.82, b: 0 };
+
+let nextAnnotId = 1;
+
+function toPlaced(a: AnnotationUI): PlacedAnnotation {
+  const base = {
+    color: a.color,
+    contents: a.contents,
+    author: AUTHOR,
+    id: `ianpdf-${a.id}`,
+  };
+  return {
+    srcIndex: a.srcIndex,
+    spec:
+      a.type === "highlight"
+        ? { type: "highlight", quads: a.quads, ...base }
+        : { type: "note", x: a.x, y: a.y, ...base },
+  };
 }
 
 export interface SearchState {
@@ -41,6 +91,9 @@ interface AppState {
   scrollRequest: { page: number; nonce: number } | null;
   busy: string | null;
   error: string | null;
+  annotations: AnnotationUI[];
+  tool: Tool;
+  noteEditor: number | null; // annotation id with an open editor
 
   openFile(): Promise<void>;
   openPath(path: string): Promise<void>;
@@ -58,6 +111,12 @@ interface AppState {
   gotoMatch(delta: 1 | -1): void;
   clearSearch(): void;
   clearError(): void;
+  setTool(tool: Tool): void;
+  addHighlight(srcIndex: number, quads: PdfRect[]): void;
+  addNote(srcIndex: number, x: number, y: number): void;
+  setNoteText(id: number, text: string): void;
+  deleteAnnotation(id: number): void;
+  openNoteEditor(id: number | null): void;
 }
 
 const clampZoom = (z: number) => Math.min(4, Math.max(0.25, z));
@@ -89,6 +148,9 @@ export const useApp = create<AppState>()((set, get) => {
       selection: [],
       search: null,
       scrollRequest: { page: 0, nonce: s.docVersion + 1 },
+      annotations: [],
+      tool: "select",
+      noteEditor: null,
     }));
   };
 
@@ -119,6 +181,9 @@ export const useApp = create<AppState>()((set, get) => {
     scrollRequest: null,
     busy: null,
     error: null,
+    annotations: [],
+    tool: "select",
+    noteEditor: null,
 
     openFile: () =>
       withBusy("Opening…", async () => {
@@ -134,25 +199,33 @@ export const useApp = create<AppState>()((set, get) => {
 
     save: () =>
       withBusy("Saving…", async () => {
-        const { srcBytes, pages, filePath, fileName } = get();
+        const { srcBytes, pages, filePath, fileName, annotations } = get();
         if (!srcBytes) return;
         let path = filePath;
         if (!path) {
           path = await pickSavePath(fileName ?? "untitled.pdf");
           if (!path) return;
         }
-        const bytes = await engine.materialize(srcBytes, pages);
+        const bytes = await engine.materialize(
+          srcBytes,
+          pages,
+          annotations.map(toPlaced)
+        );
         await writeFileBytes(path, bytes);
         set({ filePath: path, fileName: baseName(path), dirty: false });
       }),
 
     saveAs: () =>
       withBusy("Saving…", async () => {
-        const { srcBytes, pages, fileName } = get();
+        const { srcBytes, pages, fileName, annotations } = get();
         if (!srcBytes) return;
         const path = await pickSavePath(fileName ?? "untitled.pdf");
         if (!path) return;
-        const bytes = await engine.materialize(srcBytes, pages);
+        const bytes = await engine.materialize(
+          srcBytes,
+          pages,
+          annotations.map(toPlaced)
+        );
         await writeFileBytes(path, bytes);
         set({ filePath: path, fileName: baseName(path), dirty: false });
       }),
@@ -172,7 +245,11 @@ export const useApp = create<AppState>()((set, get) => {
           await loadIntoViewer(merged, paths.length === 1 ? paths[0] : null, paths.length > 1);
           return;
         }
-        const current = await engine.materialize(srcBytes, pages);
+        const current = await engine.materialize(
+          srcBytes,
+          pages,
+          get().annotations.map(toPlaced)
+        );
         const merged = await engine.appendPdfs(current, incoming);
         await loadIntoViewer(merged, filePath, true);
       }),
@@ -186,7 +263,11 @@ export const useApp = create<AppState>()((set, get) => {
         const stem = (fileName ?? "untitled.pdf").replace(/\.pdf$/i, "");
         const path = await pickSavePath(`${stem}-pages.pdf`);
         if (!path) return;
-        const bytes = await engine.materialize(srcBytes, entries);
+        const bytes = await engine.materialize(
+          srcBytes,
+          entries,
+          get().annotations.map(toPlaced)
+        );
         await writeFileBytes(path, bytes);
       }),
 
@@ -301,5 +382,65 @@ export const useApp = create<AppState>()((set, get) => {
 
     clearSearch: () => set({ search: null }),
     clearError: () => set({ error: null }),
+
+    setTool: (tool) => set({ tool }),
+
+    addHighlight: (srcIndex, quads) => {
+      if (quads.length === 0) return;
+      set((s) => ({
+        annotations: [
+          ...s.annotations,
+          {
+            id: nextAnnotId++,
+            srcIndex,
+            type: "highlight",
+            color: HIGHLIGHT_COLOR,
+            contents: "",
+            quads,
+          },
+        ],
+        dirty: true,
+      }));
+    },
+
+    addNote: (srcIndex, x, y) => {
+      const id = nextAnnotId++;
+      set((s) => ({
+        annotations: [
+          ...s.annotations,
+          {
+            id,
+            srcIndex,
+            type: "note",
+            color: NOTE_COLOR,
+            contents: "",
+            x,
+            y,
+          },
+        ],
+        tool: "select",
+        noteEditor: id,
+        dirty: true,
+      }));
+    },
+
+    setNoteText: (id, text) => {
+      set((s) => ({
+        annotations: s.annotations.map((a) =>
+          a.id === id ? { ...a, contents: text } : a
+        ),
+        dirty: true,
+      }));
+    },
+
+    deleteAnnotation: (id) => {
+      set((s) => ({
+        annotations: s.annotations.filter((a) => a.id !== id),
+        noteEditor: s.noteEditor === id ? null : s.noteEditor,
+        dirty: true,
+      }));
+    },
+
+    openNoteEditor: (id) => set({ noteEditor: id }),
   };
 });
