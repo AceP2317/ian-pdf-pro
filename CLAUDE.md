@@ -46,4 +46,4 @@ $env:NDK_HOME = "$env:ANDROID_HOME\ndk\27.1.12297006"
 
 ## Status
 
-Phase 0 complete. Phase 1 (viewer + organizer) built 2026-07-05; spike scaffolding removed (lives in git history at the Phase-0 baseline commit). Architecture: `src/core/pdf-engine.ts` is the facade (only module that imports pdfjs-dist); page reorder/rotate/delete are a virtual mapping in `src/store.ts`, materialized via `src/core/pdf-ops.ts` on save/extract/merge. Loose ends: Phase-1 in-app acceptance run (`fixtures/test-100-pages.pdf`, reopen-in-Edge check), on-device Android spike (needs user's phone; signed test APK in `dist-test/`).
+Phases 0–1 complete (Phase 1 accepted 2026-07-05: 100-page reorder/save reopened correctly in Edge); spike scaffolding removed (lives in git history at the Phase-0 baseline commit). Architecture: `src/core/pdf-engine.ts` is the facade (only module that imports pdfjs-dist); page reorder/rotate/delete are a virtual mapping in `src/store.ts`, materialized via `src/core/pdf-ops.ts` on save/extract/merge. Test corpus in `fixtures/`. Next: Phase 2 (annotations). Remaining loose end: on-device Android spike (needs user's phone; signed test APK in `dist-test/`).
