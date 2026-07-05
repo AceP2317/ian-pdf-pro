@@ -42,8 +42,8 @@ $env:NDK_HOME = "$env:ANDROID_HOME\ndk\27.1.12297006"
 - CSP is set in `src-tauri/tauri.conf.json` (`wasm-unsafe-eval`, blob: workers). Don't null it.
 - Page rendering must stay virtualized (current ±2 pages) — Android WebView memory is the #1 risk. Destroy pdf.js loading tasks aggressively.
 - Every PDF write path (annotations, forms, encryption) must be interop-checked in Adobe Reader + Edge before its phase closes.
-- Project path contains spaces — quote paths in commands. If Android tooling ever chokes on the space, junction a space-free path instead of moving the repo.
+- Repo lives at `C:\Users\ian42\dev\Ian-PDF-Pro` (space-free; moved 2026-07-05 from the old `Asobe PDF Suite` folder — old path is dead, never reference it).
 
 ## Status
 
-Phase 0 (toolchain + scaffold + spike) complete; renamed from the interim working name 2026-07-05. `src/spike.ts` + spike UI in `App.tsx` are Phase-0 scaffolding, replaced in Phase 1 by the real viewer. Remaining Phase-0 loose end: on-device Android spike (needs user's phone; signed test APK in `dist-test/`).
+Phase 0 complete. Phase 1 (viewer + organizer) built 2026-07-05; spike scaffolding removed (lives in git history at the Phase-0 baseline commit). Architecture: `src/core/pdf-engine.ts` is the facade (only module that imports pdfjs-dist); page reorder/rotate/delete are a virtual mapping in `src/store.ts`, materialized via `src/core/pdf-ops.ts` on save/extract/merge. Loose ends: Phase-1 in-app acceptance run (`fixtures/test-100-pages.pdf`, reopen-in-Edge check), on-device Android spike (needs user's phone; signed test APK in `dist-test/`).

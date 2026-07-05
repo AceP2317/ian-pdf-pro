@@ -53,6 +53,7 @@ Node 24, Rust stable MSVC + Android targets, portable JDK 17, Android SDK/NDK, V
 
 **Phase 1 — Viewer + organizer:** pdf.js canvas + text layer, thumbnails, zoom, search; merge/split/reorder/rotate/delete via pdf-lib; open/save via Tauri dialog+fs. Page virtualization from day one (render current ±2 pages only — Android memory).
 ✅ Open a 100-page PDF, reorder pages, save; file reopens correctly in Edge.
+Status 2026-07-05: built. Design: reorder/rotate/delete are a virtual page mapping (`store.ts` PageState[]), materialized through pdf-lib only on save/extract/merge — instant organizer UX, one write path. Automated Node suite over `core/pdf-ops.ts` passed (reorder/rotate/delete/merge/extract on 100 pages, incl. intrinsic-/Rotate composition). Pending to close the phase: in-app acceptance run with `fixtures/test-100-pages.pdf` + Edge reopen check.
 
 **Phase 2 — Annotate:** `annotations.ts` writing real annotation dicts WITH appearance streams; overlay UI on the viewer.
 ✅ Highlight + sticky note made here are visible and editable in Adobe Reader.
