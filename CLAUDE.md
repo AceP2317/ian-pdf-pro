@@ -42,7 +42,7 @@ $env:NDK_HOME = "$env:ANDROID_HOME\ndk\27.1.12297006"
 - CSP is set in `src-tauri/tauri.conf.json` (`wasm-unsafe-eval`, blob: workers). Don't null it.
 - Page rendering must stay virtualized (current ±2 pages) — Android WebView memory is the #1 risk. Destroy pdf.js loading tasks aggressively.
 - Every PDF write path (annotations, forms, encryption) must be interop-checked in Adobe Reader + Edge before its phase closes.
-- Repo lives at `C:\Users\ian42\dev\Ian-PDF-Pro` (space-free; moved 2026-07-05 from the old `Asobe PDF Suite` folder — old path is dead, never reference it).
+- Repo folder is space-free (`Ian-PDF-Pro`; renamed 2026-07-05 from an old spaced folder name — the old path is dead, never reference it).
 
 ## Status
 
