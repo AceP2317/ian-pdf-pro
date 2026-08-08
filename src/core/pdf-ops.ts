@@ -1,6 +1,6 @@
 // Pure pdf-lib document surgery. No pdf.js, no DOM — runs in any JS host,
 // which keeps these ops testable outside the webview.
-import { PDFDocument, degrees } from "@cantoo/pdf-lib";
+import { PDFDocument, PDFArray, PDFName, degrees } from "@cantoo/pdf-lib";
 import { addAnnotationToPage } from "./annotations";
 import type { AnnotationSpec } from "./annotations";
 
@@ -47,13 +47,36 @@ export async function materialize(
       page.setRotation(degrees((page.getRotation().angle + extra) % 360));
     }
     out.addPage(page);
-    for (const placed of annotations) {
-      if (placed.srcIndex === pages[i].srcIndex) {
-        addAnnotationToPage(out, page, placed.spec, now);
-      }
+    const mine = annotations.filter((a) => a.srcIndex === pages[i].srcIndex);
+    if (mine.length > 0) {
+      detachAnnots(out, page);
+      for (const placed of mine) addAnnotationToPage(out, page, placed.spec, now);
     }
   });
   return out.save();
+}
+
+// Give this page its OWN /Annots array before anything is written into it.
+//
+// copyPages() returns distinct page nodes whose ENTRIES are shared objects. That is fine, and
+// deliberate, for everything the copier does not expect to be mutated — /Type, /Resources,
+// /MediaBox, /Contents. /Annots is the exception, because addAnnotationToPage appends to it. So
+// selecting the same source page twice produced two output pages pointing at ONE array, and every
+// annotation write landed in both: extracting "1,1" from a highlighted page gave two pages each
+// carrying the highlight twice. Reachable from the UI — store.ts's extractPages() passes
+// parsePageRanges() output straight through, and parsePageRanges("1,1") returns [0, 0].
+//
+// The refs inside are copied, not the annotation objects themselves: two pages legitimately
+// sharing an inherited annotation is pre-existing copyPages behaviour, and only the ARRAY is
+// mutated here. Caught by tests/phase2-annotations.test.ts, which asserted the correct behaviour
+// and went red before this existed.
+function detachAnnots(out: PDFDocument, page: ReturnType<PDFDocument["addPage"]>): void {
+  const key = PDFName.of("Annots");
+  const raw = page.node.get(key);
+  const existing = raw ? (out.context.lookup(raw) as PDFArray | undefined) : undefined;
+  const items =
+    existing && typeof existing.asArray === "function" ? [...existing.asArray()] : [];
+  page.node.set(key, out.context.obj(items));
 }
 
 // Append every page of each `others` document to `baseBytes`, in order.
