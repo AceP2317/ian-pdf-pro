@@ -32,7 +32,7 @@ A self-owned Adobe-Acrobat-Pro-style PDF suite:
 ## Project structure
 
 ```
-Ian PDF Pro/
+Ian-PDF-Pro/
 ├── src/                    # React UI — 100% shared between Windows & Android
 │   ├── features/           # viewer/ organizer/ annotate/ forms/ ocr/ secure/ compare/
 │   ├── core/               # pdf-engine.ts (facade), annotations.ts, redaction.ts, compress.ts, ocr.ts
