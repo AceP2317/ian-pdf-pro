@@ -25,9 +25,30 @@ you run it.
 **Verified 2026-08-08: `npm run build` exits 0** (`tsc` clean, 340 modules, Vite build succeeds).
 That had never been demonstrated, so treat it as the current baseline rather than a claim.
 
+**Brought level 2026-08-15 — and section 1 below is CLOSED.** One commit landed since this file was
+written (`0a99c57`) and it is the one section 1 was asking for. Read section 1 anyway: what it found
+is the durable part, and the reconstruction did not simply restore what was missing.
+
+**77 checks, zero new dependencies**, on `node:test` with a 14-line `registerHooks` shim for the one
+seam — `pdf-ops.ts` imports `./annotations` extensionless, which Vite resolves and Node does not.
+Editing that import was rejected on purpose: it would put the seam in shipping code and make it a
+convention every future `src/core` file has to remember, where the hook is a mechanism.
+
+**Two things the reconstruction could NOT inherit, both measured rather than assumed.**
+`fixtures/test-100-pages.pdf` is `/Rotate 0` on all 100 pages, so the claimed intrinsic-`/Rotate`
+composition cannot be exercised against it at all — the suite synthesizes a four-page 0/90/180/270
+document and crosses it with `extraRotation`. And the original 26 checks are **unrecoverable**: they
+were throwaway scripts, confirmed by `git log --all --diff-filter=AD` over every test path, which
+returns only the two fixture PDFs. So this is a DIFFERENT suite, and the documents now say so rather
+than implying continuity.
+
+**Counted debt, stated: no check count goes into prose.** A hand-typed number in a file with no
+generator drifts the moment a check is added — which is the same class as the missing suites, one
+artifact over.
+
 ---
 
-## 1. THE FINDING THAT OUTRANKS THE FEATURE WORK — two suites are asserted and do not exist
+## 1. CLOSED 2026-08-15 — the finding that outranked the feature work: two suites were asserted and did not exist
 
 `docs/BUILD_PLAN.md` records Phase 1 as verified by *"an automated Node suite over
 `core/pdf-ops.ts`"* and Phase 2 by *"a 26-check Node suite"*; commit `529bc62` repeats the
