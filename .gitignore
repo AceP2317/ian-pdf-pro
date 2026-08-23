@@ -23,3 +23,9 @@ dist-test
 *.njsproj
 *.sln
 *.sw?
+
+# Desktop launcher pair, generated per-machine by dev\tools\make-launcher.ps1 and never committed:
+# the root .lnk bakes in this machine's absolute paths; app.ico is a packaging derivative.
+# Anchored to the repo root so a nested, deliberately-tracked .lnk is unaffected.
+/*.lnk
+/app.ico
