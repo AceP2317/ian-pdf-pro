@@ -113,6 +113,15 @@ yet. Both are Phase 4-6 deliverables, so that is expected, not broken.
 - **A fresh shell cannot build.** Four variables must be set first — `$env:Path`, `JAVA_HOME`,
   `ANDROID_HOME`, `NDK_HOME`. The block is in `CLAUDE.md`; all four target paths were confirmed
   present on disk 2026-08-08.
+- **THE ANDROID SDK IS GONE, found 2026-09-26: reinstall it before the next APK build.**
+  `%LOCALAPPDATA%\Android` no longer exists, so `ANDROID_HOME`, `NDK_HOME` and the
+  `platform-tools` Path entry all point at nothing and `npx tauri android build` cannot run.
+  `JAVA_HOME` (`~\.jdks\jdk-17.0.19+10`) is intact. Reinstall the command-line tools, an SDK
+  platform, build-tools and NDK `27.1.12297006` into `%LOCALAPPDATA%\Android\Sdk`, so the
+  `CLAUDE.md` block works unchanged. Not urgent: the signed test APK in `dist-test/` (11.5 MB,
+  2026-07-05) is still on disk for the on-device spike. The operator chose to defer the reinstall
+  to this repo (asked in a Command_Center_OS session). `C:\Android` was a different toolchain,
+  the retired Command Center phone app's, and has no NDK, so it could not have served this build.
 - **Four constraints a session gets wrong by default**, all in `CLAUDE.md`: pdf.js v6 puts
   `destroy()` on the loading task from `getDocument(...)`, not the document proxy; WASM must load
   via `WebAssembly.instantiate(arrayBuffer)` and never `instantiateStreaming` (MIME type under
