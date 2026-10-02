@@ -4,9 +4,9 @@
 # WHY THIS TEST EXISTS
 # npm 11 runs an install script no `allowScripts` entry in package.json covers, and only warns.
 # npm 12 (released 2026-07-08, npm's `latest` since) BLOCKS it, with only the same warning, which
-# nobody reads in a build log. Found 2026-10-02 in ian-provencher, when its move to Node 24 put the
+# nobody reads in a build log. Found 2026-10-02 in ian-provencher, when its Node update put the
 # warning in Cloudflare's log. Every repo on this PC with install scripts got its decisions written
-# the same day, and every one runs this same file. The logic lives once, in
+# the same day, and every one with a guard suite runs this same file. The logic lives once, in
 # ~/.claude/install-script-decisions.mjs, which reads package-lock.json: what `npm ci` installs.
 #
 # WHAT IT DEMANDS
