@@ -96,6 +96,8 @@ fi
 # nightly tier ran 705,912ms across 82 tests, so one hang would have cost 81 good results.
 GUARD_KILL_FAST="${GUARD_KILL_FAST:-120}"
 GUARD_KILL_SLOW="${GUARD_KILL_SLOW:-1800}"
+# Seconds between the polite stop at a bound and the forced one, for a test that ignores the first.
+GUARD_KILL_GRACE="${GUARD_KILL_GRACE:-5}"
 
 tiers="fast"
 case "${1:-}" in
@@ -228,13 +230,25 @@ for tier in $tiers; do
     #
     # THE FALLBACK KEEPS THIS WORKING WHERE `timeout` IS ABSENT, because a runner that dies on a
     # missing tool is worse than an unbounded one.
+    #
+    # THE OUTPUT GOES TO A FILE, AND A FORCED STOP FOLLOWS THE POLITE ONE (2026-10-04, the review of
+    # 4d5e6eb). Read through `$(...)`, the runner waited for every process holding the pipe, so a
+    # check that left a background child running held the run for as long as that child lived, past
+    # any bound. And `timeout` alone sends SIGTERM, which a check can ignore and run on to its own
+    # end; `-k` sends SIGKILL GUARD_KILL_GRACE seconds later, and `timeout` then exits 137, not 124.
+    _kill=""; _cap="$(mktemp 2>/dev/null)" || _cap=""
+    [ -n "$_cap" ] || printf '  (no temp file: %s is read through a pipe, which a child it leaves running can hold open)\n' "$(basename "$t")"
     if command -v timeout >/dev/null 2>&1; then
       if [ "$tier" = fast ]; then _kill="$GUARD_KILL_FAST"; else _kill="$GUARD_KILL_SLOW"; fi
-      out="$(timeout "${_kill}s" bash "$t" 2>&1)"; rc=$?
+      if [ -n "$_cap" ]; then timeout -k "$GUARD_KILL_GRACE" "${_kill}s" bash "$t" > "$_cap" 2>&1; rc=$?
+      else out="$(timeout -k "$GUARD_KILL_GRACE" "${_kill}s" bash "$t" 2>&1)"; rc=$?; fi
     else
-      out="$(bash "$t" 2>&1)"; rc=$?
+      if [ -n "$_cap" ]; then bash "$t" > "$_cap" 2>&1; rc=$?; else out="$(bash "$t" 2>&1)"; rc=$?; fi
     fi
+    if [ -n "$_cap" ]; then out="$(cat "$_cap" 2>/dev/null)"; rm -f "$_cap" 2>/dev/null; fi
     ms=$(( $(date +%s%3N) - s )); total=$((total+ms))
+    # A forced stop at the bound is the same event as a polite one, so it reads as 124 below.
+    [ "$rc" -eq 137 ] && [ -n "$_kill" ] && [ "$ms" -ge $(( _kill * 1000 )) ] && rc=124
     name="$(basename "$t" .sh)"
     # RECORDED BEFORE THE BRANCHES BELOW, not inside them. Those arms end in `continue` and each
     # prints its own wording, so a log call per arm is several chances to add a new arm later and
