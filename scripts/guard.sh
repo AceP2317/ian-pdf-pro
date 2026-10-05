@@ -98,6 +98,26 @@ GUARD_KILL_FAST="${GUARD_KILL_FAST:-120}"
 GUARD_KILL_SLOW="${GUARD_KILL_SLOW:-1800}"
 # Seconds between the polite stop at a bound and the forced one, for a test that ignores the first.
 GUARD_KILL_GRACE="${GUARD_KILL_GRACE:-5}"
+# A GRACE OF 0 SWITCHES THE FORCED STOP OFF, AND SAYS SO (2026-10-04, the review of login-starter
+# 9d4a71f): GNU `timeout -k 0` sends no SIGKILL at all, measured with a check that ignores SIGTERM
+# running on to its own end.
+# THE TEST IS NUMERIC, AND A BOUND OF 0 IS CAUGHT TOO (2026-10-05, reviews C F3, F4, N2 and G F4): the
+# old pattern listed 0, 00 and 000, so 0000 still switched the forced stop off, and it read any unit
+# as junk, cutting a valid "1m" or "2.5" to 1 second with a line saying it was off. And a bound of 0
+# makes `timeout 0s` no bound at all, with nothing said. The grace takes a duration `timeout -k`
+# reads (a number, optionally with s, m, h or d); the bounds are plain seconds, as an "s" is appended.
+# Each must hold a non-zero digit, and anything else falls back with a line naming the value.
+guard_duration() { # name value fallback units-allowed -> REPLY
+  local re='^[0-9]+(\.[0-9]+)?$'
+  [ "$4" = units ] && re='^[0-9]+(\.[0-9]+)?[smhd]?$'
+  if [[ "$2" =~ $re ]] && [[ "${2%[smhd]}" =~ [1-9] ]]; then REPLY="$2"; return 0; fi
+  printf '  (%s=%s is not a duration above zero, and 0 switches it off; using %s)\n' "$1" "$2" "$3"
+  REPLY="$3"
+}
+guard_duration GUARD_KILL_GRACE "$GUARD_KILL_GRACE" 1 units; GUARD_KILL_GRACE="$REPLY"
+guard_duration GUARD_KILL_FAST "$GUARD_KILL_FAST" 120 plain; GUARD_KILL_FAST="$REPLY"
+guard_duration GUARD_KILL_SLOW "$GUARD_KILL_SLOW" 1800 plain; GUARD_KILL_SLOW="$REPLY"
+case "$GUARD_KILL_GRACE" in *[smhd]) GRACE_SHOWN="$GUARD_KILL_GRACE" ;; *) GRACE_SHOWN="${GUARD_KILL_GRACE}s" ;; esac
 
 tiers="fast"
 case "${1:-}" in
@@ -220,7 +240,6 @@ for tier in $tiers; do
     # They are counted on their own line below, which is the whole reason the tier exists.
     [ "$tier" = quarantine ] || ran=$((ran+1))
     tier_ran=$((tier_ran+1))
-    s=$(date +%s%3N)
     # BOTH BOUNDS ARE HANG DETECTORS AND NEITHER IS A SPEED LIMIT, which is why each sits far above
     # any legitimate runtime for its tier. Speed already has its own instrument: FAST_BUDGET_MS
     # NAMES a fast test that has grown slow without killing it. A bound tight enough to catch
@@ -232,21 +251,34 @@ for tier in $tiers; do
     # missing tool is worse than an unbounded one.
     #
     # THE OUTPUT GOES TO A FILE, AND A FORCED STOP FOLLOWS THE POLITE ONE (2026-10-04, the review of
-    # 4d5e6eb). Read through `$(...)`, the runner waited for every process holding the pipe, so a
+    # skills 4d5e6eb). Read through `$(...)`, the runner waited for every process holding the pipe, so a
     # check that left a background child running held the run for as long as that child lived, past
     # any bound. And `timeout` alone sends SIGTERM, which a check can ignore and run on to its own
     # end; `-k` sends SIGKILL GUARD_KILL_GRACE seconds later, and `timeout` then exits 137, not 124.
+    # WHAT A PASSING CHECK LEAVES BEHIND IS KILLED WITH IT, AND QUIETLY (2026-10-04, found by review B
+    # of claude-home 1450c2c4, fixed in dc22d0aa): with the output in a file nothing waited on a background child, so one a check left
+    # running outlived the whole run; and a forced stop made bash print "Killed" for the job, naming no
+    # check. `timeout` leads its own process group, so the group is killed once the check returns, and
+    # the subshell absorbs the job notice.
     _kill=""; _cap="$(mktemp 2>/dev/null)" || _cap=""
     [ -n "$_cap" ] || printf '  (no temp file: %s is read through a pipe, which a child it leaves running can hold open)\n' "$(basename "$t")"
+    # THE CLOCK BRACKETS THE CHECK ALONE (2026-10-04, the review of login-starter 9d4a71f): started
+    # before mktemp and stopped after cat and rm, it charged each check about 100ms of the runner's own
+    # work, measured 202-213ms against 102-106ms, which tipped checks near the budget over it.
+    s=$(date +%s%3N)
     if command -v timeout >/dev/null 2>&1; then
       if [ "$tier" = fast ]; then _kill="$GUARD_KILL_FAST"; else _kill="$GUARD_KILL_SLOW"; fi
-      if [ -n "$_cap" ]; then timeout -k "$GUARD_KILL_GRACE" "${_kill}s" bash "$t" > "$_cap" 2>&1; rc=$?
+      if [ -n "$_cap" ]; then
+        ( timeout -k "$GUARD_KILL_GRACE" "${_kill}s" bash "$t" > "$_cap" 2>&1 & _tp=$!
+          wait "$_tp"; _trc=$?
+          kill -KILL -- "-$_tp" 2>/dev/null
+          exit "$_trc" ) 2>/dev/null; rc=$?
       else out="$(timeout -k "$GUARD_KILL_GRACE" "${_kill}s" bash "$t" 2>&1)"; rc=$?; fi
     else
       if [ -n "$_cap" ]; then bash "$t" > "$_cap" 2>&1; rc=$?; else out="$(bash "$t" 2>&1)"; rc=$?; fi
     fi
-    if [ -n "$_cap" ]; then out="$(cat "$_cap" 2>/dev/null)"; rm -f "$_cap" 2>/dev/null; fi
     ms=$(( $(date +%s%3N) - s )); total=$((total+ms))
+    if [ -n "$_cap" ]; then out="$(cat "$_cap" 2>/dev/null)"; rm -f "$_cap" 2>/dev/null; fi
     # A forced stop at the bound is the same event as a polite one, so it reads as 124 below.
     [ "$rc" -eq 137 ] && [ -n "$_kill" ] && [ "$ms" -ge $(( _kill * 1000 )) ] && rc=124
     name="$(basename "$t" .sh)"
@@ -281,7 +313,8 @@ for tier in $tiers; do
       # nothing — but it is NAMED differently, because the fix is different. A failing test has
       # FOUND something; a killed one has HUNG, and the output below is whatever it managed first.
       fail=$((fail+1)); printf '  KILLED %5dms  %s\n' "$ms" "$name"
-      printf '         ^ hit the %ss per-test bound for the %s tier. Every other test in this run\n' "$_kill" "$tier"
+      printf '         ^ hit the %ss per-test bound for the %s tier; one that ignores the polite stop runs up\n' "$_kill" "$tier"
+      printf '           to %s more before the forced one, so its time can pass the bound. Every other test in this run\n' "$GRACE_SHOWN"
       printf '           still reported, which is the whole point of the bound (L-374).\n'
       printf '%s\n' "$out" | sed 's/^/          /'
     else
