@@ -107,16 +107,25 @@ GUARD_KILL_GRACE="${GUARD_KILL_GRACE:-5}"
 # makes `timeout 0s` no bound at all, with nothing said. The grace takes a duration `timeout -k`
 # reads (a number, optionally with s, m, h or d); the bounds are plain seconds, as an "s" is appended.
 # Each must hold a non-zero digit, and anything else falls back with a line naming the value.
-guard_duration() { # name value fallback units-allowed -> REPLY
-  local re='^[0-9]+(\.[0-9]+)?$'
-  [ "$4" = units ] && re='^[0-9]+(\.[0-9]+)?[smhd]?$'
-  if [[ "$2" =~ $re ]] && [[ "${2%[smhd]}" =~ [1-9] ]]; then REPLY="$2"; return 0; fi
-  printf '  (%s=%s is not a duration above zero, and 0 switches it off; using %s)\n' "$1" "$2" "$3"
+# THE BOUNDS ARE WHOLE SECONDS (2026-10-05, reviews R3 F1 and R10 F1): 11d80196 let a bound of 1.5 or
+# 09 through, and the forced-stop branch below multiplies the bound in bash arithmetic, which fails on
+# a decimal and reads 09 as a bad octal number. That error ended the whole tier loop: the hung check
+# and every check after it went unreported, and the run printed "0 failed" and exited 0. A bound is
+# now a whole number of seconds, read in base 10, so 09 is 9; the grace never enters arithmetic and
+# keeps timeout's own forms (1m, 2.5). The grace falls back to 1, the smallest that still forces.
+guard_duration() { # name value fallback grace|bound -> REPLY
+  if [ "$4" = grace ]; then
+    if [[ "$2" =~ ^[0-9]+(\.[0-9]+)?[smhd]?$ ]] && [[ "${2%[smhd]}" =~ [1-9] ]]; then REPLY="$2"; return 0; fi
+    printf '  (%s=%s is not a duration above zero, and 0 switches it off; using %s)\n' "$1" "$2" "$3"
+  else
+    if [[ "$2" =~ ^[0-9]+$ ]] && [[ "$2" =~ [1-9] ]]; then REPLY=$((10#$2)); return 0; fi
+    printf '  (%s=%s is not a whole number of seconds above zero; using %s)\n' "$1" "$2" "$3"
+  fi
   REPLY="$3"
 }
-guard_duration GUARD_KILL_GRACE "$GUARD_KILL_GRACE" 1 units; GUARD_KILL_GRACE="$REPLY"
-guard_duration GUARD_KILL_FAST "$GUARD_KILL_FAST" 120 plain; GUARD_KILL_FAST="$REPLY"
-guard_duration GUARD_KILL_SLOW "$GUARD_KILL_SLOW" 1800 plain; GUARD_KILL_SLOW="$REPLY"
+guard_duration GUARD_KILL_GRACE "$GUARD_KILL_GRACE" 1 grace; GUARD_KILL_GRACE="$REPLY"
+guard_duration GUARD_KILL_FAST "$GUARD_KILL_FAST" 120 bound; GUARD_KILL_FAST="$REPLY"
+guard_duration GUARD_KILL_SLOW "$GUARD_KILL_SLOW" 1800 bound; GUARD_KILL_SLOW="$REPLY"
 case "$GUARD_KILL_GRACE" in *[smhd]) GRACE_SHOWN="$GUARD_KILL_GRACE" ;; *) GRACE_SHOWN="${GUARD_KILL_GRACE}s" ;; esac
 
 tiers="fast"
@@ -260,11 +269,18 @@ for tier in $tiers; do
     # running outlived the whole run; and a forced stop made bash print "Killed" for the job, naming no
     # check. `timeout` leads its own process group, so the group is killed once the check returns, and
     # the subshell absorbs the job notice.
+    # ponytail: A CHILD STARTED IN THE LAST INSTANT BEFORE THE CHECK EXITS CAN ESCAPE THAT KILL on this
+    # PC (2026-10-05, reviews R3 F2 and R10 F2): a child still being created when the group is killed
+    # is missed, and survived in 1 to 4 runs of 10; one that had run for a second never did. No check
+    # here starts a background process today. Upgrade path: one sweep at the end of the run for
+    # processes left in the groups the run's checks led, after a short pause.
     _kill=""; _cap="$(mktemp 2>/dev/null)" || _cap=""
     [ -n "$_cap" ] || printf '  (no temp file: %s is read through a pipe, which a child it leaves running can hold open)\n' "$(basename "$t")"
     # THE CLOCK BRACKETS THE CHECK ALONE (2026-10-04, the review of login-starter 9d4a71f): started
     # before mktemp and stopped after cat and rm, it charged each check about 100ms of the runner's own
-    # work, measured 202-213ms against 102-106ms, which tipped checks near the budget over it.
+    # work, measured 202-213ms against 102-106ms, which tipped checks near the budget over it. The
+    # subshell that launches the check adds about 15ms of its own on a quiet machine (100 against 115ms
+    # for a trivial check, measured 2026-10-05); under heavy load it measured several hundred.
     s=$(date +%s%3N)
     if command -v timeout >/dev/null 2>&1; then
       if [ "$tier" = fast ]; then _kill="$GUARD_KILL_FAST"; else _kill="$GUARD_KILL_SLOW"; fi
