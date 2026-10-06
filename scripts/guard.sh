@@ -118,7 +118,10 @@ guard_duration() { # name value fallback grace|bound -> REPLY
     if [[ "$2" =~ ^[0-9]+(\.[0-9]+)?[smhd]?$ ]] && [[ "${2%[smhd]}" =~ [1-9] ]]; then REPLY="$2"; return 0; fi
     printf '  (%s=%s is not a duration above zero, and 0 switches it off; using %s)\n' "$1" "$2" "$3"
   else
-    if [[ "$2" =~ ^[0-9]+$ ]] && [[ "$2" =~ [1-9] ]]; then REPLY=$((10#$2)); return 0; fi
+    # AT MOST SEVEN DIGITS (2026-10-05, reviews R1 F5 and R2 3): bash arithmetic wraps past 2^63, so a
+    # twenty-digit bound became 0 or a negative number, and `timeout 0` means no bound at all.
+    # 9,999,999 seconds is 115 days, far past any bound worth setting.
+    if [[ "$2" =~ ^[0-9]{1,7}$ ]] && [[ "$2" =~ [1-9] ]]; then REPLY=$((10#$2)); return 0; fi
     printf '  (%s=%s is not a whole number of seconds above zero; using %s)\n' "$1" "$2" "$3"
   fi
   REPLY="$3"
@@ -226,6 +229,11 @@ _glog_trim() {
 _glog_trim
 _glog "=== run start  tiers:$tiers  repo:$(cd "$HERE/.." 2>/dev/null && pwd)"
 
+# EVERY PROCESS A CHECK STARTS CARRIES THIS RUN'S MARK, so the sweep after the loop can find what the
+# group kill missed: a child that leads a group of its own, or one created in the instant the group
+# was killed. A runner started inside a check sets its own mark and sweeps its own children.
+GUARD_RUN_TOKEN="guard-run-$$-${RANDOM}${RANDOM}"; export GUARD_RUN_TOKEN
+
 for tier in $tiers; do
   dir="$HERE/guards/$tier"
   # A TIER THAT DOES NOT EXIST AND A TIER THAT EXISTS AND IS EMPTY ARE DIFFERENT EVENTS, and until
@@ -269,11 +277,9 @@ for tier in $tiers; do
     # running outlived the whole run; and a forced stop made bash print "Killed" for the job, naming no
     # check. `timeout` leads its own process group, so the group is killed once the check returns, and
     # the subshell absorbs the job notice.
-    # ponytail: A CHILD STARTED IN THE LAST INSTANT BEFORE THE CHECK EXITS CAN ESCAPE THAT KILL on this
-    # PC (2026-10-05, reviews R3 F2 and R10 F2): a child still being created when the group is killed
-    # is missed, and survived in 1 to 4 runs of 10; one that had run for a second never did. No check
-    # here starts a background process today. Upgrade path: one sweep at the end of the run for
-    # processes left in the groups the run's checks led, after a short pause.
+    # TWO KINDS OF CHILD ESCAPE THAT KILL, and the sweep after the loop below catches both (2026-10-05,
+    # reviews R3 F2, R10 F2 and R2 2): one still being created when the group is killed, which survived
+    # in 1 to 4 runs of 10, and one that leads a group of its own, such as `timeout 20 bash -c ... &`.
     _kill=""; _cap="$(mktemp 2>/dev/null)" || _cap=""
     [ -n "$_cap" ] || printf '  (no temp file: %s is read through a pipe, which a child it leaves running can hold open)\n' "$(basename "$t")"
     # THE CLOCK BRACKETS THE CHECK ALONE (2026-10-04, the review of login-starter 9d4a71f): started
@@ -342,6 +348,20 @@ for tier in $tiers; do
   # guards went missing; this one holding none means the debt is paid.
   [ "$tier_ran" -eq 0 ] && [ "$tier" != quarantine ] && empty="$empty $tier"
 done
+
+# THE SWEEP: anything still carrying this run's mark outlived its check, so it is stopped and named.
+# The runner carries the mark too and is skipped. Measured 2026-10-05: one grep over /proc, 68ms, and
+# it found and stopped both `timeout` and its child where the review's group-led orphan had escaped.
+# ponytail: a Windows program a check starts in the background shows no environment under /proc, so
+# it is not found here. Upgrade path: a Windows job object that the runner's checks start inside.
+_left=""
+for _f in $(grep -l -a "GUARD_RUN_TOKEN=$GUARD_RUN_TOKEN" /proc/[0-9]*/environ 2>/dev/null); do
+  _p="${_f#/proc/}"; _p="${_p%/environ}"
+  [ "$_p" = "$$" ] && continue
+  [ -r "/proc/$_p/cmdline" ] || continue
+  kill -KILL "$_p" 2>/dev/null && _left="$_left $_p"
+done
+[ -n "$_left" ] && printf '\n  (a check left process(es) running past its end; stopped:%s)\n' "$_left"
 
 printf '\n%d test(s) run, %d passed, %d failed, %dms total.\n' "$ran" "$pass" "$fail" "$total"
 # THE SUMMARY IS THE LAST THING WRITTEN, so a record with no "run end" line is a run that died
