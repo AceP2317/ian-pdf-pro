@@ -234,6 +234,48 @@ _glog "=== run start  tiers:$tiers  repo:$(cd "$HERE/.." 2>/dev/null && pwd)"
 # was killed. A runner started inside a check sets its own mark and sweeps its own children.
 GUARD_RUN_TOKEN="guard-run-$$-${RANDOM}${RANDOM}"; export GUARD_RUN_TOKEN
 
+# --- AT COMMIT, A FAST TEST RUNS WHEN THE COMMIT TOUCHES WHAT IT COVERS (2026-10-06) -------------
+# WHY. Every fix adds a test, and every fast test ran before every commit, so the commit wait grew
+# with the history rather than with the change: claude-home's fast tier was cut to 32 tests on 10-01
+# and stood at 43 five days later, a median 42.5s per commit, with 30 commits killed at 150s in 60
+# days. The operator ticked this on 2026-10-06 (estate lean-out, C1), having twice declined moving
+# tests to the nightly tier, because a test moved there stops guarding the commit that breaks it.
+# This keeps that guard: a test still runs before any commit that touches its subject.
+#
+# HOW. githooks/pre-commit sets GUARD_SCOPE=staged. A fast test whose first 60 lines hold
+#   # COVERS: <glob> <glob> ...
+# (globs relative to the repo root; * crosses folders) runs only when a staged path matches one of
+# them, or when the test file itself is staged. A test with NO COVERS line always runs, so a test
+# nobody has described is never skipped. Without GUARD_SCOPE (a hand run, the nightly run) every
+# test runs, and the nightly runner runs this fast tier every night, so a skipped test is never
+# more than a day from running.
+# Builtins only: a `head` per test would cost ~40ms each on this machine.
+_sel_on=0; declare -a _sel_staged=(); skipped=0
+if [ "${GUARD_SCOPE:-}" = staged ]; then
+  _sel_on=1
+  mapfile -t _sel_staged < <(git -C "$HERE/.." diff --cached --name-only 2>/dev/null | tr -d '\r')
+fi
+_sel_wanted() {  # <test file> <tier> -> 0 to run it, 1 to skip it
+  [ "$_sel_on" = 1 ] || return 0
+  local t="$1" rel="scripts/guards/$2/${1##*/}" line covers="" n=0 p g
+  local -a globs=()
+  while IFS= read -r line && [ "$n" -lt 60 ]; do
+    n=$((n + 1))
+    case "$line" in '# COVERS:'*) covers=${line#'# COVERS:'}; break ;; esac
+  done < "$t"
+  covers=${covers%$'\r'}
+  [ -n "${covers//[[:space:]]/}" ] || return 0
+  read -r -a globs <<< "$covers"
+  for p in "${_sel_staged[@]}"; do
+    [ "$p" = "$rel" ] && return 0
+    for g in "${globs[@]}"; do
+      # shellcheck disable=SC2053  # $g IS a pattern, on purpose
+      [[ $p == $g ]] && return 0
+    done
+  done
+  return 1
+}
+
 for tier in $tiers; do
   dir="$HERE/guards/$tier"
   # A TIER THAT DOES NOT EXIST AND A TIER THAT EXISTS AND IS EMPTY ARE DIFFERENT EVENTS, and until
@@ -253,6 +295,12 @@ for tier in $tiers; do
   tier_ran=0
   for t in "$dir"/*.sh; do
     [ -e "$t" ] || continue
+    # A SKIPPED TEST STILL COUNTS AS PRESENT for the empty-tier test below, and is counted on its own
+    # line in the summary, so "N run" never quietly shrinks without saying how many waited.
+    if [ "$tier" = fast ] && ! _sel_wanted "$t" "$tier"; then
+      tier_ran=$((tier_ran+1)); skipped=$((skipped+1))
+      continue
+    fi
     # QUARANTINED TESTS ARE NOT IN `ran`, so "N test(s) run, P passed, F failed" still adds up.
     # They are counted on their own line below, which is the whole reason the tier exists.
     [ "$tier" = quarantine ] || ran=$((ran+1))
@@ -364,6 +412,7 @@ done
 [ -n "$_left" ] && printf '\n  (a check left process(es) running past its end; stopped:%s)\n' "$_left"
 
 printf '\n%d test(s) run, %d passed, %d failed, %dms total.\n' "$ran" "$pass" "$fail" "$total"
+[ "$skipped" -gt 0 ] && printf '%d fast test(s) skipped: they cover nothing this commit stages, and the nightly run runs them.\n' "$skipped"
 # THE SUMMARY IS THE LAST THING WRITTEN, so a record with no "run end" line is a run that died
 # partway — which is a fact worth reading, and the one a save-only-on-failure design cannot record.
 _glog "$(printf '=== run end    %d run, %d passed, %d failed, %dms total' "$ran" "$pass" "$fail" "$total")"
