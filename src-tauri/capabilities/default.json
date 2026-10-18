@@ -9,10 +9,6 @@
     "dialog:default",
     "fs:default",
     "fs:allow-read-file",
-    "fs:allow-write-file",
-    {
-      "identifier": "fs:scope",
-      "allow": [{ "path": "**" }, { "path": "$HOME/**" }, { "path": "$TEMP/**" }]
-    }
+    "fs:allow-write-file"
   ]
 }

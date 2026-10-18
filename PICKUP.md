@@ -83,11 +83,14 @@ Doing neither leaves the repo asserting something untrue.
    built at `dist-test/ian-pdf-pro-test.apk` (12 MB). `dist-test/` is gitignored, so it is
    local-only — if it is missing, rebuild with
    `npx tauri android build --apk --target aarch64`.
-3. **Decide on the filesystem scope grant.** `src-tauri/capabilities/default.json` grants
-   `fs:scope` with `{"path": "**"}` — a whole-filesystem wildcard — alongside the narrower
-   `$HOME/**` and `$TEMP/**` entries. For an app being handed to colleagues that is a wide
-   grant, and no document mentions it. **Flagged, not changed:** narrowing it is a behaviour
-   decision, not a typo fix, and it could break file opening.
+3. **DECIDED 2026-10-18, his pick: the filesystem scope grant is gone.** The `fs:scope` block,
+   with its `{"path": "**"}` wildcard beside `$HOME/**` and `$TEMP/**`, is removed; the three
+   `fs:` permissions stay. Every path the app reads or writes comes from its open or save dialog
+   (`src/platform/dialogs.ts`; `openPath` has no caller and nothing persists a path), and the
+   dialog plugin adds each picked path to the scope for that run (plugin-dialog 2.7.1's own docs).
+   Proven here by `npm test` 77 of 77, `cargo check`, and a debug rebuild whose exe postdates the
+   capability file. Still his: the desktop click test (open a PDF, add a note, save, reopen it,
+   merge two) and the phone check for Android, filed as one Command Center action with item 1.
 
 ## 3. Unstarted, and already specified
 

@@ -42,6 +42,7 @@ $env:NDK_HOME = "$env:ANDROID_HOME\ndk\27.1.12297006"
 - CSP is set in `src-tauri/tauri.conf.json` (`wasm-unsafe-eval`, blob: workers). Don't null it.
 - Page rendering must stay virtualized (current ±2 pages) — Android WebView memory is the #1 risk. Destroy pdf.js loading tasks aggressively.
 - Every PDF write path (annotations, forms, encryption) must be interop-checked in Adobe Reader + Edge before its phase closes.
+- **File access comes only through the open and save dialogs** (settled 2026-10-18). `src-tauri/capabilities/default.json` holds `fs:allow-read-file` and `fs:allow-write-file` with no `fs:scope`: the dialog plugin adds each picked path to the scope for that run, and the grant ends at restart. A feature that takes a path from anywhere else (drag-and-drop, open-with, a recent-files list) needs its own grant, or its read fails with a scope error.
 - Repo folder is space-free (`Ian-PDF-Pro`; renamed 2026-07-05 from an old spaced folder name — the old path is dead, never reference it).
 
 ## Status
