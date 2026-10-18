@@ -24,11 +24,13 @@ const FIXTURE = readFixture("test-100-pages.pdf");
 const entry = (srcIndex: number): PageEntry => ({ srcIndex, extraRotation: 0 });
 
 /** Build a small annotated document: highlight on source page 0, note on source page 1. */
+// NOW is passed in: until 2026-10-18 it was not, so /M carried the real clock and the date arm passed
+// only on 2026-08-08, the day this suite was written.
 async function annotated(pages: PageEntry[] = identityPages(3)) {
   const bytes = await materialize(FIXTURE, pages, [
     { srcIndex: 0, spec: HL },
     { srcIndex: 1, spec: NOTE },
-  ]);
+  ], NOW);
   return { bytes, doc: await loadDoc(bytes) };
 }
 

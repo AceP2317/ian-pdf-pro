@@ -26,11 +26,12 @@ export function identityPages(numPages: number): PageEntry[] {
 // Build a new PDF from `bytes` with pages in `pages` order and rotation,
 // writing `annotations` onto their pages. Annotations whose srcIndex is not
 // in `pages` are dropped with their page. Also used for extraction: pass a
-// subset of entries.
+// subset of entries. `now` stamps the annotations' /M and /CreationDate; a test passes a fixed one.
 export async function materialize(
   bytes: Uint8Array,
   pages: PageEntry[],
-  annotations: PlacedAnnotation[] = []
+  annotations: PlacedAnnotation[] = [],
+  now: Date = new Date()
 ): Promise<Uint8Array> {
   if (pages.length === 0) throw new Error("Cannot save a PDF with no pages");
   const src = await PDFDocument.load(bytes);
@@ -40,7 +41,6 @@ export async function materialize(
     src,
     pages.map((p) => p.srcIndex)
   );
-  const now = new Date();
   copied.forEach((page, i) => {
     const extra = pages[i].extraRotation;
     if (extra !== 0) {
