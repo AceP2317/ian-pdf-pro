@@ -34,6 +34,9 @@
 #   * it NEVER runs on the commit path. `guard.sh` with no argument is still fast/ alone.
 #   * a FAILING quarantined test changes no exit code. That failure is the known debt, and 192
 #     permanent reds mixed into the nightly verdict would drown the one new red that matters.
+#   * BUT ONLY A FAILURE THAT NAMES ITS DEFECT IS THE DEBT (2026-10-20). One whose control is
+#     BLIND, whose scan crashed or checked nothing, or that was killed is a broken check, and it is
+#     a FAIL like any other: the debt it was parked on is not being checked at all.
 #   * a PASSING quarantined test is the loud event. Somebody fixed the defect, so the test should
 #     graduate into fast/ or nightly/ and start defending the repair. Exit code 2 says so.
 # A quarantine nobody ever empties is a rubbish bin. The graduation signal is what makes it a queue.
@@ -41,7 +44,7 @@
 # Usage:
 #   bash scripts/guard.sh                the fast tier   (npm run guard)
 #   bash scripts/guard.sh --nightly      the slow tier   (npm run guard:nightly)
-#   bash scripts/guard.sh --quarantine   the known-failing tier; exit 2 if any now PASSES
+#   bash scripts/guard.sh --quarantine   the known-failing tier; exit 2 if any now PASSES, 1 if any is broken
 #   bash scripts/guard.sh --all          all three
 
 set -uo pipefail
@@ -186,11 +189,21 @@ _glog() { [ -n "$GUARD_LOG" ] || return 0
 
 # One line per test, plus the captured output when it did not pass. The label mirrors the terminal
 # exactly, so a reader of the log and a reader of the screen are reading the same verdict.
+#
+# A PARKED CHECK'S FAILURE IS ITS KNOWN DEFECT ONLY WHEN IT SAYS SO (2026-10-20). Every parked check
+# prints "this mistake is present" over what it found. Until that day any failure counted as the
+# debt, so one whose control had gone BLIND read as its defect still there, and two did for weeks.
+# A finding that says nothing was checked is a crashed scan's, not the defect's. The nightly job
+# carries the same rule, and its test runs both on the same three outputs.
+guard_parked_found() {  # <output> -> 0 when it names the defect it was parked on
+  case "$1" in *"nothing was checked"*) return 1 ;; *"this mistake is present"*) return 0 ;; esac
+  return 1
+}
 _glog_test() {  # <tier> <rc> <ms> <name> <output>
   [ -n "$GUARD_LOG" ] || return 0
   local _t="$1" _rc="$2" _ms="$3" _n="$4" _o="$5" _label
-  if [ "$_t" = quarantine ]; then
-    [ "$_rc" -eq 0 ] && _label=PASSES || _label=known
+  if [ "$_t" = quarantine ] && [ "$_rc" -eq 0 ]; then _label=PASSES
+  elif [ "$_t" = quarantine ] && [ "$_rc" -ne 124 ] && guard_parked_found "$_o"; then _label=known
   elif [ "$_rc" -eq 0 ]; then _label=ok
   elif [ "$_rc" -eq 124 ]; then _label=KILLED
   else _label=FAIL
@@ -364,10 +377,13 @@ for tier in $tiers; do
         qpass=$((qpass+1)); GRADUATES+=("$name")
         printf '  PASSES %5dms  %s\n' "$ms" "$name"
         printf '         ^ the defect this was parked on is GONE. Move it to fast/ or nightly/.\n'
-      else
+        continue
+      elif [ "$rc" -ne 124 ] && guard_parked_found "$out"; then
         qfail=$((qfail+1)); printf '  known %6dms  %s\n' "$ms" "$name"
+        continue
       fi
-      continue
+      # Anything else is a broken check, run and failed like any other (guard_parked_found).
+      ran=$((ran+1))
     fi
     if [ "$rc" -eq 0 ]; then
       pass=$((pass+1)); printf '  ok    %6dms  %s\n' "$ms" "$name"
@@ -389,6 +405,7 @@ for tier in $tiers; do
       printf '%s\n' "$out" | sed 's/^/          /'
     else
       fail=$((fail+1)); printf '  FAIL  %6dms  %s\n' "$ms" "$name"
+      [ "$tier" = quarantine ] && printf '        ^ parked, but this is not its defect being found: the check itself is broken, and\n          nothing is checking the debt it was parked on. Repair it where it stands.\n'
       printf '%s\n' "$out" | sed 's/^/          /'
     fi
   done

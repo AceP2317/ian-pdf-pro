@@ -36,7 +36,7 @@ fi
 # pin that shipped among them — with no network and no git, so it costs milliseconds. A sweep
 # from a comparison that always answers "reachable" would pass on the very tree it exists to
 # catch, and that is indistinguishable from a clean tree unless this runs.
-canary_out="$(node "$CHECK" --selftest 2>&1)"
+canary_out="$(node "$CHECK" --selftest 2>&1)" || canary_out="CANARY FAILED: the control itself exited $? - $canary_out"
 case "$canary_out" in
   ""|*"CANARY FAILED"*)
     printf "FAIL %s - the check is BLIND. Its own control said: %s\n" \

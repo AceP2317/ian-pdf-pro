@@ -25,7 +25,7 @@ fi
 
 # THE CONTROL RUNS FIRST: undecided scripts must be found, decisions read the way npm reads them,
 # and macOS-only packages skipped. A sweep from a blind matcher would pass every repo.
-canary_out="$(node "$CHECK" --selftest 2>&1)"
+canary_out="$(node "$CHECK" --selftest 2>&1)" || canary_out="CANARY FAILED: the control itself exited $? - $canary_out"
 case "$canary_out" in
   ""|*"CANARY FAILED"*)
     printf "FAIL %s - the check is BLIND. Its own control said: %s\n" "$NAME" "${canary_out:-nothing at all}"

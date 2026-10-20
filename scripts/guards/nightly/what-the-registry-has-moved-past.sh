@@ -28,7 +28,7 @@ fi
 
 # THE CONTROL, same as the fast tier's: a comparison that cannot say "behind" would report
 # every project clean forever, which is the most comfortable way for this to be useless.
-canary_out="$(node "$CHECK" --selftest 2>&1)"
+canary_out="$(node "$CHECK" --selftest 2>&1)" || canary_out="CANARY FAILED: the control itself exited $? - $canary_out"
 case "$canary_out" in
   ""|*"CANARY FAILED"*)
     printf "FAIL %s - the check is BLIND. Its own control said: %s\n" \
