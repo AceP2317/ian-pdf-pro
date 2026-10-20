@@ -1,1 +1,5 @@
 * text=auto eol=lf
+
+# cmd.exe needs CRLF to find its labels; this repo's `* eol=lf` above outranks the machine-wide rule.
+*.bat text eol=crlf
+*.cmd text eol=crlf
