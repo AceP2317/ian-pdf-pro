@@ -90,7 +90,8 @@ fi
 # the guard switched off.
 #
 # THE TWO TIERS HAVE DIFFERENT LEGITIMATE CEILINGS AND SO NEED DIFFERENT BOUNDS. A fast test lives
-# under a 2000ms budget and the whole suite is killed by the commit hook at 60s. A nightly test can
+# under a 2000ms budget and the commit hook stops the whole suite at the limit on its suite line,
+# which this runner reads from the hook below and never copies here. A nightly test can
 # run whole suites, and the slowest measured on this estate is 11m20s.
 #
 # WITHOUT A BOUND, the only thing that notices a test which never returns is whatever kills the
@@ -289,6 +290,21 @@ _sel_wanted() {  # <test file> <tier> -> 0 to run it, 1 to skip it
   return 1
 }
 
+# A CHECK WITH TWO COVERS LINES IS REFUSED UNRUN, in every mode (2026-10-23, his call on the ask of
+# 2026-10-09). _sel_wanted above reads only the first `# COVERS:` line, so a check written with one
+# line per file ran at commit only when its first line's files were staged, and nothing said so: four
+# guards were written that way on 2026-10-09, and house-node's was skipped on a commit that changed the
+# very file it checks. One COVERS line holds every glob. Kept apart from _sel_wanted, which a check cuts
+# out of this file and runs alone. _cov_n is how many COVERS lines the first 60 lines hold.
+_cov_count() {  # <test file> -> sets _cov_n
+  local line n=0; _cov_n=0
+  while IFS= read -r line && [ "$n" -lt 60 ]; do
+    n=$((n + 1))
+    case "$line" in '# COVERS:'*) _cov_n=$((_cov_n + 1)) ;; esac
+  done < "$1"
+}
+_fast_ran=0; _fast_ms=0; _always_ms=0
+
 for tier in $tiers; do
   dir="$HERE/guards/$tier"
   # A TIER THAT DOES NOT EXIST AND A TIER THAT EXISTS AND IS EMPTY ARE DIFFERENT EVENTS, and until
@@ -310,6 +326,18 @@ for tier in $tiers; do
     [ -e "$t" ] || continue
     # A SKIPPED TEST STILL COUNTS AS PRESENT for the empty-tier test below, and is counted on its own
     # line in the summary, so "N run" never quietly shrinks without saying how many waited.
+    _cov_n=0
+    if [ "$tier" = fast ]; then
+      _cov_count "$t"
+      if [ "$_cov_n" -gt 1 ]; then
+        ran=$((ran+1)); tier_ran=$((tier_ran+1)); fail=$((fail+1)); name="$(basename "$t" .sh)"
+        _glog_test "$tier" 1 0 "$name" "refused unrun: $_cov_n COVERS lines"
+        printf '  FAIL  %6dms  %s\n' 0 "$name"
+        printf '        ^ refused unrun: it holds %d `# COVERS:` lines and only the first is read, so a commit\n' "$_cov_n"
+        printf '          touching only the files on the others would skip it. Put every glob on one COVERS line.\n'
+        continue
+      fi
+    fi
     if [ "$tier" = fast ] && ! _sel_wanted "$t" "$tier"; then
       tier_ran=$((tier_ran+1)); skipped=$((skipped+1))
       continue
@@ -361,6 +389,10 @@ for tier in $tiers; do
       if [ -n "$_cap" ]; then bash "$t" > "$_cap" 2>&1; rc=$?; else out="$(bash "$t" 2>&1)"; rc=$?; fi
     fi
     ms=$(( $(date +%s%3N) - s )); total=$((total+ms))
+    if [ "$tier" = fast ]; then
+      _fast_ran=$((_fast_ran+1)); _fast_ms=$((_fast_ms+ms))
+      [ "$_cov_n" -eq 0 ] && _always_ms=$((_always_ms+ms))
+    fi
     if [ -n "$_cap" ]; then out="$(cat "$_cap" 2>/dev/null)"; rm -f "$_cap" 2>/dev/null; fi
     # A forced stop at the bound is the same event as a polite one, so it reads as 124 below.
     [ "$rc" -eq 137 ] && [ -n "$_kill" ] && [ "$ms" -ge $(( _kill * 1000 )) ] && rc=124
@@ -466,7 +498,7 @@ fi
 # commit hook's kill. Past that the suite is killed, the commit is refused, and NOTHING WAS
 # CHECKED — the worst of both. Measured the day this was added: claude-home's fast tier reached 38
 # tests and 23.5s mid-conversion, 39% of the kill, with more still to convert. A warning at 60%
-# leaves room to move the slowest tests to nightly/ before the gate starts refusing work.
+# leaves room to scope the costliest tests with COVERS lines before the gate starts refusing work.
 #
 # THE NUMBER IS READ OUT OF THE HOOK THAT ENFORCES IT AND IS WRITTEN DOWN NOWHERE ELSE HERE, from
 # 2026-09-17. This block used to carry `${GUARD_HOOK_KILL_MS:-60000}` and a comment stating the
@@ -475,10 +507,17 @@ fi
 # warned at 36s against a real ceiling of 90s, and said 60 in prose beside it. A duplicated number
 # does not announce that it has drifted; it just quietly reports the wrong percentage.
 #
-# THE FALLBACK WARNS RATHER THAN GUESSING QUIETLY. If the hook cannot be read the old 60000 is used
-# and says so on the error channel, because a percentage measured against an invented ceiling looks
-# exactly like one measured against the real thing.
-if [ "$ran" -gt 0 ] && printf '%s' "$tiers" | grep -q fast; then
+# NO GUESS AT ALL, since 2026-10-23 (box item 37). An unreadable hook used to fall back to 60000 and warn
+# against it, still the 60s the hook had dropped on 2026-09-14. Now nothing is measured and that is said.
+#
+# JUDGED AGAINST WHAT A COMMIT RUNS, since 2026-10-23 (box item 32, his pick). A commit
+# (GUARD_SCOPE=staged) runs the fast tests covering what it stages plus every one with no COVERS line,
+# so its own fast total is what the stop sees. A hand run runs every fast test, which no commit does: on
+# 2026-10-20 one warned at 214s of a 150s stop while the widest commit that day ran 63 tests in 82s.
+# For a hand run the number that bounds every commit is the tests with no COVERS line, which run on all
+# of them. The advice to move tests to nightly/ is gone: he declined it twice, since a test moved there
+# stops guarding the commit that breaks it.
+if [ "$_fast_ran" -gt 0 ]; then
   KILL_MS="${GUARD_HOOK_KILL_MS:-}"
   if [ -z "$KILL_MS" ]; then
     _gr_hook="${GUARD_HOOK_PATH:-$HOME/.claude/githooks/pre-commit}"
@@ -496,17 +535,22 @@ if [ "$ran" -gt 0 ] && printf '%s' "$tiers" | grep -q fast; then
     if [ -n "$_gr_secs" ]; then
       KILL_MS="${_gr_secs}000"
     else
-      KILL_MS=60000
-      printf 'WARNING: the commit kill could not be read from %s, so the suite-total\n' "$_gr_hook" >&2
-      printf '  warning below is measured against a GUESSED 60000ms. Check the real timeout\n' >&2
-      printf '  in that file before acting on the percentage.\n' >&2
+      printf 'NOTE: the commit stop could not be read from %s, so this run was not measured\n' "$_gr_hook" >&2
+      printf '  against it. Read the suite line in that file for the real limit.\n' >&2
     fi
   fi
-  if [ "$total" -gt $(( KILL_MS * 60 / 100 )) ]; then
-    printf 'THIS SUITE IS %dms, %d%% of the %dms the commit hook kills at.\n' \
-      "$total" $(( total * 100 / KILL_MS )) "$KILL_MS" >&2
-    printf '  Past that kill the commit is refused AND nothing was checked. Move the slowest\n' >&2
-    printf '  tests into guards/nightly/ — the lines above are sorted by cost.\n' >&2
+  if [ -n "$KILL_MS" ]; then
+    if [ "${GUARD_SCOPE:-}" = staged ]; then
+      _judged=$_fast_ms; _what="this commit's fast tests"
+    else
+      _judged=$_always_ms; _what="the fast tests with no COVERS line, which every commit runs"
+    fi
+    if [ "$_judged" -gt $(( KILL_MS * 60 / 100 )) ]; then
+      printf 'THIS SUITE IS %dms for %s, %d%% of the %dms the commit hook stops at.\n' \
+        "$_judged" "$_what" $(( _judged * 100 / KILL_MS )) "$KILL_MS" >&2
+      printf '  Past that stop the commit is refused AND nothing was checked. A COVERS line naming the\n' >&2
+      printf '  files a test checks lets every commit that touches none of them skip it.\n' >&2
+    fi
   fi
 fi
 
