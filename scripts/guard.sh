@@ -326,19 +326,15 @@ for tier in $tiers; do
     [ -e "$t" ] || continue
     # A SKIPPED TEST STILL COUNTS AS PRESENT for the empty-tier test below, and is counted on its own
     # line in the summary, so "N run" never quietly shrinks without saying how many waited.
-    _cov_n=0
+    # A refused check takes the same FAIL path as a failing one, so the runner prints each result
+    # kind from one line, which login-starter's build check reads.
+    _cov_n=0; _refused=""
     if [ "$tier" = fast ]; then
       _cov_count "$t"
-      if [ "$_cov_n" -gt 1 ]; then
-        ran=$((ran+1)); tier_ran=$((tier_ran+1)); fail=$((fail+1)); name="$(basename "$t" .sh)"
-        _glog_test "$tier" 1 0 "$name" "refused unrun: $_cov_n COVERS lines"
-        printf '  FAIL  %6dms  %s\n' 0 "$name"
-        printf '        ^ refused unrun: it holds %d `# COVERS:` lines and only the first is read, so a commit\n' "$_cov_n"
-        printf '          touching only the files on the others would skip it. Put every glob on one COVERS line.\n'
-        continue
-      fi
+      [ "$_cov_n" -gt 1 ] && _refused="refused unrun: it holds $_cov_n \`# COVERS:\` lines and only the first is read, so a commit
+touching only the files on the others would skip it. Put every glob on one COVERS line."
     fi
-    if [ "$tier" = fast ] && ! _sel_wanted "$t" "$tier"; then
+    if [ "$tier" = fast ] && [ -z "$_refused" ] && ! _sel_wanted "$t" "$tier"; then
       tier_ran=$((tier_ran+1)); skipped=$((skipped+1))
       continue
     fi
@@ -377,7 +373,9 @@ for tier in $tiers; do
     # subshell that launches the check adds about 15ms of its own on a quiet machine (100 against 115ms
     # for a trivial check, measured 2026-10-05); under heavy load it measured several hundred.
     s=$(date +%s%3N)
-    if command -v timeout >/dev/null 2>&1; then
+    if [ -n "$_refused" ]; then
+      rc=1
+    elif command -v timeout >/dev/null 2>&1; then
       if [ "$tier" = fast ]; then _kill="$GUARD_KILL_FAST"; else _kill="$GUARD_KILL_SLOW"; fi
       if [ -n "$_cap" ]; then
         ( timeout -k "$GUARD_KILL_GRACE" "${_kill}s" bash "$t" > "$_cap" 2>&1 & _tp=$!
@@ -389,11 +387,12 @@ for tier in $tiers; do
       if [ -n "$_cap" ]; then bash "$t" > "$_cap" 2>&1; rc=$?; else out="$(bash "$t" 2>&1)"; rc=$?; fi
     fi
     ms=$(( $(date +%s%3N) - s )); total=$((total+ms))
-    if [ "$tier" = fast ]; then
+    if [ "$tier" = fast ] && [ -z "$_refused" ]; then
       _fast_ran=$((_fast_ran+1)); _fast_ms=$((_fast_ms+ms))
       [ "$_cov_n" -eq 0 ] && _always_ms=$((_always_ms+ms))
     fi
     if [ -n "$_cap" ]; then out="$(cat "$_cap" 2>/dev/null)"; rm -f "$_cap" 2>/dev/null; fi
+    [ -n "$_refused" ] && out="$_refused"
     # A forced stop at the bound is the same event as a polite one, so it reads as 124 below.
     [ "$rc" -eq 137 ] && [ -n "$_kill" ] && [ "$ms" -ge $(( _kill * 1000 )) ] && rc=124
     name="$(basename "$t" .sh)"
