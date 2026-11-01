@@ -16,7 +16,7 @@
 # SILENT control as broken.
 #
 # TWO TIERS, AND THE SPLIT IS A MEASUREMENT RATHER THAN A PREFERENCE.
-#   fast/     under FAST_BUDGET_MS each; runs before every commit
+#   fast/     under the repo's time allowance each; runs before every commit
 #   nightly/  a browser render or a full build; too slow for a commit and still worth running
 # A gate people wait six minutes for gets bypassed, and a bypassed gate protects nothing.
 #
@@ -50,37 +50,13 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FAST_BUDGET_MS="${FAST_BUDGET_MS:-2000}"
 
-# A REPO MAY DECLARE ITS OWN FAST BUDGET, IN WRITING, IN guards/fast-budget.
-# Format: one line, "<milliseconds>  <reason, and the date>". No reason, no override.
-#
-# WHY THIS EXISTS. The budget catches a fast test that has GROWN slow. It cannot tell that apart
-# from a test that was always legitimately slower than 2000ms, and it offers only two remedies —
-# make it cheaper, or move it to nightly. Measured 2026-09-17 in ECO-Translator: its type check
-# runs 2.4s and its engine suite 3.2s, both on the commit path deliberately because that repo's
-# product is an arithmetic answer a planner acts on, and it is the only one of seventeen that
-# tests before a commit. Neither remedy applied, so two warnings fired on EVERY commit.
-#
-# THAT IS THE REAL DAMAGE, not the noise. A warning that always fires stops being read, and the
-# third test to drift over would have gone unnoticed — the same reasoning that keeps thirteen
-# known-stale runners out of the failure count rather than drowning the one that matters.
-#
-# THE REASON IS MANDATORY AND THE OVERRIDE IS ANNOUNCED ON EVERY RUN. An allowance nobody sees is
-# how "make it cheaper" quietly becomes "raise the number", which would cost the instrument
-# entirely rather than repair it.
-if [ -f "$HERE/guards/fast-budget" ]; then
-  _fb_line="$(head -1 "$HERE/guards/fast-budget" 2>/dev/null)"
-  _fb_ms="${_fb_line%%[!0-9]*}"
-  _fb_why="${_fb_line#"$_fb_ms"}"
-  _fb_why="${_fb_why#"${_fb_why%%[![:space:]]*}"}"
-  if [ -n "$_fb_ms" ] && [ -n "$_fb_why" ]; then
-    FAST_BUDGET_MS="$_fb_ms"
-  else
-    printf 'guard.sh: guards/fast-budget must read "<milliseconds>  <reason>" — ignoring it and using %sms.\n' \
-      "$FAST_BUDGET_MS" >&2
-  fi
-fi
+# HOW FAST A FAST TEST IS, IS JUDGED OVERNIGHT, NOT HERE (2026-10-31, his picks). This runner prints
+# each test's time and makes no speed verdict, because one run on a busy machine cannot carry one:
+# until that day it warned on any run over 2000ms, 370 of 732 claude-home runs printed that warning,
+# and a 14-second test hid in the noise for five days. ~/.claude/nightly_plan.py now times each
+# suspect on its own and names one only after two confirmations running over its repo's allowance,
+# which a repo may raise in writing in scripts/guards/fast-budget ("<milliseconds>  <reason>").
 
 # THE PER-TEST KILL, AND IT IS PER TIER BECAUSE ONE NUMBER WAS MEASURED WRONG (L-374).
 # A single 600s bound was added on 2026-09-13 and KILLED A HEALTHY TEST on its first full nightly
@@ -90,7 +66,7 @@ fi
 # the guard switched off.
 #
 # THE TWO TIERS HAVE DIFFERENT LEGITIMATE CEILINGS AND SO NEED DIFFERENT BOUNDS. A fast test lives
-# under a 2000ms budget and the commit hook stops the whole suite at the limit on its suite line,
+# under its repo's time allowance and the commit hook stops the whole suite at the limit on its suite line,
 # which this runner reads from the hook below and never copies here. A nightly test can
 # run whole suites, and the slowest measured on this estate is 11m20s.
 #
@@ -144,7 +120,7 @@ case "${1:-}" in
   *) printf 'usage: guard.sh [--nightly|--quarantine|--all]\n' >&2; exit 2 ;;
 esac
 
-pass=0; fail=0; over=0; total=0; ran=0; absent=''; empty=''
+pass=0; fail=0; total=0; ran=0; absent=''; empty=''
 qpass=0; qfail=0; declare -a GRADUATES=()
 
 # --- THE RUN LOG ---------------------------------------------------------------------------------
@@ -314,13 +290,6 @@ for tier in $tiers; do
   # run. Measured that day: six of eleven repos reported clean having executed nothing at all.
   if [ ! -d "$dir" ]; then absent="$absent $tier"; continue; fi
   printf '\n%s tier:\n' "$tier"
-  # SAID OUT LOUD, EVERY RUN. A raised budget nobody sees is how the instrument gets spent.
-  # The FACT is announced every run; the REASON stays in the file. Printing the whole reason
-  # was the first version and it put 400 characters on every commit — noise of exactly the kind
-  # this override exists to remove.
-  if [ "$tier" = fast ] && [ -n "${_fb_why:-}" ] && [ "$FAST_BUDGET_MS" != 2000 ]; then
-    printf '  budget raised to %sms for this repo — why, in scripts/guards/fast-budget\n' "$FAST_BUDGET_MS"
-  fi
   tier_ran=0
   for t in "$dir"/*.sh; do
     [ -e "$t" ] || continue
@@ -343,8 +312,8 @@ touching only the files on the others would skip it. Put every glob on one COVER
     [ "$tier" = quarantine ] || ran=$((ran+1))
     tier_ran=$((tier_ran+1))
     # BOTH BOUNDS ARE HANG DETECTORS AND NEITHER IS A SPEED LIMIT, which is why each sits far above
-    # any legitimate runtime for its tier. Speed already has its own instrument: FAST_BUDGET_MS
-    # NAMES a fast test that has grown slow without killing it. A bound tight enough to catch
+    # any legitimate runtime for its tier. Speed has its own instrument: the nightly run times a
+    # suspect on its own and NAMES a fast test that has grown slow, without killing it. A bound tight enough to catch
     # slowness would eventually kill a legitimate slow test, which is how a suite starts being run
     # with the guard switched off — and that is not hypothetical, it is what the single 600s bound
     # did on its first nightly run before it was split into the pair above.
@@ -418,12 +387,6 @@ touching only the files on the others would skip it. Put every glob on one COVER
     fi
     if [ "$rc" -eq 0 ]; then
       pass=$((pass+1)); printf '  ok    %6dms  %s\n' "$ms" "$name"
-      # A FAST TEST THAT HAS GROWN SLOW IS SAID, NEVER SILENTLY TOLERATED. That is how a
-      # commit-time suite turns into one nobody waits for, one test at a time.
-      if [ "$tier" = fast ] && [ "$ms" -gt "$FAST_BUDGET_MS" ]; then
-        over=$((over+1))
-        printf '        ^ over the %dms budget — make it cheaper or move it to guards/nightly/\n' "$FAST_BUDGET_MS"
-      fi
     elif [ "$rc" -eq 124 ]; then
       # KILLED IS NOT FAILED, and 124 is `timeout`'s own exit code for a command it stopped. It
       # counts against the suite exactly like a failure — a test that did not finish proves
@@ -490,10 +453,8 @@ if [ -n "$empty" ]; then
   exit 1
 fi
 
-[ "$over" -gt 0 ] && printf '%d fast test(s) over budget.\n' "$over"
-
-# THE SUITE'S TOTAL, NOT JUST EACH TEST'S. Added 2026-09-11, and the per-test budget above does not
-# cover this: forty tests can each sit comfortably under 2000ms while their SUM walks into the
+# THE SUITE'S TOTAL, NOT JUST EACH TEST'S. Added 2026-09-11, and the per-test allowance the nightly
+# run judges does not cover this: forty tests can each sit comfortably under 2000ms while their SUM walks into the
 # commit hook's kill. Past that the suite is killed, the commit is refused, and NOTHING WAS
 # CHECKED — the worst of both. Measured the day this was added: claude-home's fast tier reached 38
 # tests and 23.5s mid-conversion, 39% of the kill, with more still to convert. A warning at 60%
