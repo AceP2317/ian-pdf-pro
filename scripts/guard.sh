@@ -53,10 +53,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # HOW FAST A FAST TEST IS, IS JUDGED OVERNIGHT, NOT HERE (2026-10-31, his picks). This runner prints
 # each test's time and makes no speed verdict, because one run on a busy machine cannot carry one:
-# until that day it warned on any run over 2000ms, 370 of 732 claude-home runs printed that warning,
-# and a 14-second test hid in the noise for five days. ~/.claude/nightly_plan.py now times each
-# suspect on its own and names one only after two confirmations running over its repo's allowance,
-# which a repo may raise in writing in scripts/guards/fast-budget ("<milliseconds>  <reason>").
+# until that day it warned on any run over 2000ms, 370 of 732 runs in the home repository printed
+# that warning, and a 14-second test hid in the noise for five days. The nightly planner
+# (nightly_plan.py, beside the nightly job) now times each suspect on its own and names one only after
+# two confirmations running over its repo's allowance, which a repo may raise in writing in
+# scripts/guards/fast-budget ("<milliseconds>  <reason>").
 
 # THE PER-TEST KILL, AND IT IS PER TIER BECAUSE ONE NUMBER WAS MEASURED WRONG (L-374).
 # A single 600s bound was added on 2026-09-13 and KILLED A HEALTHY TEST on its first full nightly
